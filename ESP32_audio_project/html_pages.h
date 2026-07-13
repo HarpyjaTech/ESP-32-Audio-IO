@@ -7,7 +7,7 @@
 // DECLARAÇÃO DE VARIÁVEIS EXTERNAS (Vêm do ficheiro principal)
 // ============================================================
 extern bool isSetupMode;
-extern int currentMode;
+extern OperationMode currentMode; // Correção: alterado de 'int' para 'OperationMode'
 extern int connected_apps;
 extern int vu_in;
 extern int vu_out;
@@ -80,8 +80,9 @@ void handleRoot() {
     String html = html_dashboard;
 
     String modoStr;
-    if (currentMode == 0) modoStr = "SERVIDOR";
-    else if (currentMode == 1) modoStr = "BLUETOOTH";
+    // Correção: Agora comparamos com os nomes do enum em vez de números soltos
+    if (currentMode == MODE_SERVER) modoStr = "SERVIDOR";
+    else if (currentMode == MODE_BLUETOOTH) modoStr = "BLUETOOTH";
     else modoStr = "AUXILIAR";
     html.replace("%MODO%", modoStr);
 
