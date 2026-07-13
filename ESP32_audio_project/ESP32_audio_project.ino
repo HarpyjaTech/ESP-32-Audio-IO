@@ -1,0 +1,277 @@
+/*
+ * HUB DE ÁUDIO MULTIPROTOCOLO - ESP32 (clássico) - MODO SERVIDOR TCP
+ * Modos: Servidor de Áudio TCP | Bluetooth (A2DP Sink) | Auxiliar (Pass-through)
+ * Hardware: ESP32 (WROOM/WROVER) + OLED SSD1306 0.96" + PCM1808 (ADC) + PCM5102A (DAC) + Botão
+ *
+ * Antes de compilar: em Ferramentas > Partition Scheme, escolha um esquema
+ * com mais espaço de app (ex.: "Huge APP" ou "Minimal SPIFFS"). Wi-Fi +
+ * WebServer + Bluetooth Clássico juntos costumam estourar o esquema padrão.
+ */
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "time.h"
+#include "BluetoothA2DPSink.h"
+
+// ============================================================
+// DEFINIÇÃO DE PINOS E CONSTANTES
+// ============================================================
+#define OLED_SDA      21
+#define OLED_SCL      22
+
+#define I2S_TX_BCK    26
+#define I2S_TX_WS     25
+#define I2S_TX_DOUT   18
+
+#define I2S_RX_BCK    14
+#define I2S_RX_WS     12
+#define I2S_RX_DIN    13
+
+// Pinos da Chave Seletora de 3 Posições
+#define SWITCH_PIN_A  4
+#define SWITCH_PIN_B  5
+
+#define SAMPLE_RATE   44100
+#define BUFFER_SAMPLES 128
+#define AUDIO_PORT    7000
+#define MAX_CLIENTS   4
+
+// ============================================================
+// MÁQUINA DE ESTADOS E OBJETOS GLOBAIS
+// ============================================================
+enum OperationMode {
+  MODE_SERVER,    // Posição 1: Servidor TCP
+  MODE_BLUETOOTH, // Posição 2 (Centro): Bluetooth
+  MODE_AUXILIAR   // Posição 3: Auxiliar (Pass-through)
+};
+
+OperationMode currentMode = MODE_SERVER;
+
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+WebServer webServer(80);
+WiFiServer audioServer(AUDIO_PORT);
+WiFiClient audioClients[MAX_CLIENTS];
+Preferences preferences;
+BluetoothA2DPSink a2dp_sink;
+
+String ssid = "";
+String password = "";
+bool isSetupMode = false;
+
+int16_t buffer_in[BUFFER_SAMPLES * 2];
+int16_t buffer_out[BUFFER_SAMPLES * 2];
+int vu_in = 0, vu_out = 0, connected_apps = 0;
+
+// ============================================================
+// INCLUDES LOCAIS (Devem vir após as declarações globais)
+// ============================================================
+#include "html_pages.h"
+#include "AudioI2SForESP32.h"
+
+// ============================================================
+// LÓGICA DA CHAVE SELETORA E BLUETOOTH
+// ============================================================
+OperationMode readSwitchMode() {
+  bool stA = digitalRead(SWITCH_PIN_A);
+  bool stB = digitalRead(SWITCH_PIN_B);
+
+  if (!stA && stB) return MODE_SERVER;      // Chave no Lado A
+  if (stA && !stB) return MODE_AUXILIAR;    // Chave no Lado B
+  return MODE_BLUETOOTH;                    // Chave no Centro (Ambos HIGH)
+}
+
+void bt_data_callback(const uint8_t *data, uint32_t len) {
+  int16_t *pcm_data = (int16_t *)data;
+  int max_val = 0;
+  for (uint32_t i = 0; i < len / 2; i++) {
+    if (abs(pcm_data[i]) > max_val) max_val = abs(pcm_data[i]);
+  }
+  vu_out = map(max_val, 0, 32767, 0, 100);
+}
+
+void changeMode(OperationMode newMode) {
+  if (currentMode == newMode) return;
+  display.clearDisplay(); display.setCursor(0, 20);
+  display.print("Trocando modo..."); display.display();
+
+  if (currentMode == MODE_BLUETOOTH) {
+    a2dp_sink.end(); delay(200); i2s_driver_uninstall(I2S_NUM_0);
+  } else {
+    i2s_driver_uninstall(I2S_NUM_0); i2s_driver_uninstall(I2S_NUM_1);
+  }
+  
+  if (currentMode == MODE_SERVER) {
+    audioServer.end();
+    for (int i = 0; i < MAX_CLIENTS; i++) if (audioClients[i]) audioClients[i].stop();
+  }
+
+  currentMode = newMode;
+  vu_in = 0; vu_out = 0; connected_apps = 0;
+
+  if (currentMode == MODE_BLUETOOTH) {
+    WiFi.mode(WIFI_OFF); webServer.stop();
+    i2s_pin_config_t pin_conf = { I2S_TX_BCK, I2S_TX_WS, I2S_TX_DOUT, I2S_PIN_NO_CHANGE };
+    a2dp_sink.set_pin_config(pin_conf);
+    a2dp_sink.set_stream_reader(bt_data_callback);
+    a2dp_sink.start("Audio_Server_ESP32");
+  } else {
+    if (WiFi.status() != WL_CONNECTED) {
+      WiFi.mode(WIFI_STA); WiFi.begin(ssid.c_str(), password.c_str());
+      int tries = 0; while (WiFi.status() != WL_CONNECTED && tries < 20) { delay(500); tries++; }
+    }
+    initI2S_TX(); initI2S_RX();
+    if (currentMode == MODE_SERVER) audioServer.begin();
+    webServer.begin();
+  }
+}
+
+// ============================================================
+// ATUALIZAÇÃO DO DISPLAY OLED
+// ============================================================
+void updateOLED() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  if (currentMode == MODE_SERVER) display.print("MODO: SERVIDOR TCP");
+  else if (currentMode == MODE_BLUETOOTH) display.print("MODO: BLUETOOTH");
+  else if (currentMode == MODE_AUXILIAR) display.print("MODO: AUXILIAR");
+
+  display.setCursor(0, 10);
+  if (currentMode == MODE_BLUETOOTH) {
+    if (a2dp_sink.get_audio_state() == ESP_A2D_AUDIO_STATE_STARTED) display.print("Tocando Musica");
+    else display.print("Aguardando Pareamento");
+  } else {
+    String ipStr = WiFi.localIP().toString();
+    display.print("IP: "); display.print(ipStr.length() > 13 ? ipStr.substring(0, 13) : ipStr);
+    if (currentMode == MODE_SERVER) { display.setCursor(110, 10); display.print(connected_apps); }
+  }
+
+  display.setCursor(0, 25); display.print("IN: ");
+  display.drawRect(28, 25, 98, 8, WHITE);
+  display.fillRect(28, 25, map(vu_in, 0, 100, 0, 98), 8, WHITE);
+
+  display.setCursor(0, 40); display.print("OUT:");
+  display.drawRect(28, 40, 98, 8, WHITE);
+  display.fillRect(28, 40, map(vu_out, 0, 100, 0, 98), 8, WHITE);
+
+  display.display();
+}
+
+// ============================================================
+// SETUP
+// ============================================================
+void setup() {
+  Serial.begin(115200);
+  
+  // Pinos da Chave com Pull-Up interno
+  pinMode(SWITCH_PIN_A, INPUT_PULLUP);
+  pinMode(SWITCH_PIN_B, INPUT_PULLUP);
+
+  Wire.begin(OLED_SDA, OLED_SCL);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) for (;;);
+  display.setTextSize(1); display.setTextColor(WHITE);
+
+  preferences.begin("audio_cfg", true);
+  ssid = preferences.getString("ssid", "");
+  password = preferences.getString("pass", "");
+  preferences.end();
+
+  currentMode = readSwitchMode(); // Lê a posição inicial da chave
+
+  if (ssid == "") {
+    isSetupMode = true;
+    WiFi.mode(WIFI_AP_STA); WiFi.softAP("AudioServer_Setup");
+    display.clearDisplay(); display.setCursor(0, 0); display.println("MODO CONFIGURACAO");
+    display.setCursor(0, 16); display.println("Wi-Fi: AudioServer_Setup");
+    display.setCursor(0, 32); display.println("IP:    192.168.4.1"); display.display();
+  } else {
+    WiFi.begin(ssid.c_str(), password.c_str());
+    display.clearDisplay(); display.setCursor(0, 0); display.println("Conectando Wi-Fi..."); display.display();
+    int tries = 0; while (WiFi.status() != WL_CONNECTED && tries < 20) { delay(500); tries++; }
+
+    if (WiFi.status() != WL_CONNECTED) {
+      isSetupMode = true; WiFi.mode(WIFI_AP_STA); WiFi.softAP("AudioServer_Setup");
+      display.clearDisplay(); display.setCursor(0, 0); display.println("Falha Wi-Fi. Config...");
+      display.setCursor(0, 16); display.println("IP: 192.168.4.1"); display.display();
+    } else {
+      configTime(-10800, 0, "pool.ntp.br");
+      
+      // Força a máquina de estados a iniciar baseada na chave física
+      OperationMode initialMode = currentMode;
+      currentMode = (OperationMode)-1; 
+      changeMode(initialMode);
+    }
+  }
+
+  webServer.on("/", handleRoot);
+  webServer.on("/save", HTTP_POST, handleSave);
+  webServer.on("/reset", handleReset);
+  webServer.begin();
+}
+
+// ============================================================
+// LOOP PRINCIPAL
+// ============================================================
+void loop() {
+  if (!isSetupMode) {
+    OperationMode selectedMode = readSwitchMode();
+    if (selectedMode != currentMode) {
+      changeMode(selectedMode);
+    }
+  }
+
+  if (isSetupMode) {
+    webServer.handleClient();
+  } else {
+    if (currentMode != MODE_BLUETOOTH) webServer.handleClient();
+
+    size_t bytes_read, bytes_written;
+
+    if (currentMode == MODE_SERVER) {
+      if (audioServer.hasClient()) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+          if (!audioClients[i] || !audioClients[i].connected()) {
+            if (audioClients[i]) audioClients[i].stop();
+            audioClients[i] = audioServer.accept(); break;
+          }
+        }
+      }
+
+      connected_apps = 0;
+      for (int i = 0; i < MAX_CLIENTS; i++) if (audioClients[i] && audioClients[i].connected()) connected_apps++;
+
+      i2s_read(I2S_NUM_1, buffer_in, sizeof(buffer_in), &bytes_read, portMAX_DELAY);
+      vu_in = map(abs(buffer_in[0]), 0, 32767, 0, 100);
+      for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (audioClients[i] && audioClients[i].connected()) audioClients[i].write((uint8_t*)buffer_in, bytes_read);
+      }
+
+      bool receivedAudio = false;
+      for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (audioClients[i] && audioClients[i].connected() && audioClients[i].available() >= sizeof(buffer_out)) {
+          int bytes = audioClients[i].read((uint8_t*)buffer_out, sizeof(buffer_out));
+          i2s_write(I2S_NUM_0, buffer_out, bytes, &bytes_written, 0);
+          vu_out = map(abs(buffer_out[0]), 0, 32767, 0, 100);
+          receivedAudio = true; break;
+        }
+      }
+      if (!receivedAudio) vu_out = 0;
+
+    } else if (currentMode == MODE_AUXILIAR) {
+      i2s_read(I2S_NUM_1, buffer_in, sizeof(buffer_in), &bytes_read, portMAX_DELAY);
+      vu_in = map(abs(buffer_in[0]), 0, 32767, 0, 100);
+      i2s_write(I2S_NUM_0, buffer_in, bytes_read, &bytes_written, 0);
+      vu_out = vu_in;
+    } else {
+      vu_in = 0;
+    }
+
+    static unsigned long lastOLED = 0;
+    if (millis() - lastOLED > 1000) {
+      updateOLED(); lastOLED = millis();
+    }
+  }
+}

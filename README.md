@@ -1,89 +1,86 @@
-# Interface de Áudio Wi-Fi Bidirecional com ESP32 🎧📡
+# Hub de Áudio Multiprotocolo com ESP32 🎧📡
 
-Este projeto transforma um ESP32 padrão num sistema profissional de transmissão e recepção de áudio sem fios com qualidade de CD (44.1kHz/16-bits), utilizando o protocolo **VBAN** para integração em tempo real com **Voicemeeter** ou **OBS Studio**.
+Este projeto transforma um ESP32 padrão num avançado "Servidor de Áudio" distribuído, capaz de operar como Host para aplicações clientes (PC/Mobile), receptor de música sem fio ou roteador de sinal[cite: 6]. 
 
-Desenvolvido para captura de mesas de som e retorno, superando as graves limitações de qualidade e latência do Bluetooth clássico. O dispositivo inclui um portal cativo web (Captive Portal) para configuração e um visor OLED integrado para monitoramento das métricas em tempo real (VU Meter).
+Desenvolvido para capturar áudio de mesas de som e enviar retornos com qualidade de CD (44.1kHz/16-bits)[cite: 6]. O dispositivo inclui um portal cativo web para configuração inicial e um visor OLED integrado para monitorização de métricas em tempo real (VU Meter, conexões ativas e IP)[cite: 4, 6].
 
-## 🚀 Funcionalidades
-* **Áudio Full-Duplex (Bidirecional)** simultâneo (I2S).
-* Captura de áudio usando módulo ADC **PCM1808**.
-* Reprodução de retorno/música usando módulo DAC **PCM5102A**.
-* Interface de rede gráfica via web.
-* Visor OLED integrado para acompanhamento do relógio NTP, IP, Força do Sinal Wi-Fi (RSSI) e Níveis de Volume de Áudio.
-* Ligação e reinicialização automáticas, com armazenamento protegido não-volátil (NVS).
+## 🚀 Funcionalidades Principais
+* **Máquina de Estados com 3 Modos de Operação**, selecionáveis fisicamente por uma chave deslizante de 3 posições[cite: 6]:
+  1. **Servidor TCP:** Hospeda conexões na porta 7000, roteando áudio bidirecional para até 4 aplicativos/clientes simultâneos[cite: 6].
+  2. **Receptor Bluetooth (A2DP):** Atua como uma caixa de som Bluetooth de alta fidelidade (desliga o rádio Wi-Fi temporariamente para evitar falhas de transmissão)[cite: 6].
+  3. **Auxiliar (Pass-through):** Roteia o áudio capturado na entrada diretamente para a saída digital com latência quase nula[cite: 6].
+* **Captura de áudio** usando o módulo ADC **PCM1808** via I2S[cite: 6].
+* **Reprodução de retorno** usando o módulo DAC **PCM5102A** via I2S[cite: 6].
+* **Interface de rede web** assíncrona para verificar estado e gerir o rádio[cite: 6].
 
 ---
 
 ## 🛠️ Hardware Necessário
 
-O código e o mapeamento de hardware foram desenvolvidos especificamente para as versões de breakout boards para facilitar a montagem (sem soldagem SMD).
+O mapeamento de hardware foi desenvolvido para tirar partido das breakout boards, facilitando a montagem sem necessidade de soldar componentes SMD diminutos[cite: 7].
 
-1. **Placa de Desenvolvimento:** [ESP32 com Ecrã OLED 0.96" Integrado (I2C)](https://shopee.com.br/Placa-de-Desenvolvimento-ESP32-com-Display-OLED-de-0-96-Polegadas-M%C3%B3dulo-Sem-Fio-WiFi-BLE-e-Micro-USB-para-Arduino-i.315831373.43178345220)
-2. **ADC (Entrada da Mesa):** [Placa Amplificadora Estéreo de Alta Resolução PCM1808 (24-Bits)](https://shopee.com.br/Placa-Amplificadora-ADC-Est%C3%A9reo-De-Alta-Resolu%C3%A7%C3%A3o-PCM1808-105dB-SNR-24-Bits-Para-Audi%C3%B3filos-i.426921557.28887729677)
-3. **DAC (Saída para Mesa):** [Módulo Reprodutor Áudio PCM5102A Interface Digital I2S](https://shopee.com.br/Leitor-De-%C3%81udio-SHEENGD1-PCM5102A-I2S-M%C3%B3dulo-Reprodutor-I2S-Digital-Interface-PCM5102A-DAC-i.594020711.40078197333)
-4. **Alimentação:** Carregador de qualidade superior (5V / 2A mínimo) para alimentar a porta Micro-USB do ESP32.
-5. **Conectores / Complementos:**
-   - 2x Conectores Jack P10 Fêmea de Painel (Para o *Line In*).
-   - 1x Conector Jack P10 ou P2 Fêmea de Painel (Para o *Line Out*).
-   - Fio Blindado de Áudio (para evitar ruídos do rádio Wi-Fi na fase analógica).
-   - Placa de ensaio (Protoboard) e jumpers Dupont fêmea-macho.
-   - *Recomendado:* 2 capacitores eletrolíticos (220µF) na linha 3.3V / GND.
+1. **Placa de Desenvolvimento:** ESP32 (WROOM/WROVER) com Ecrã OLED 0.96" Integrado (I2C)[cite: 6, 7].
+2. **Módulo ADC (Entrada da Mesa):** Placa PCM1808 (24-Bits)[cite: 6, 7].
+3. **Módulo DAC (Saída para Mesa):** Módulo PCM5102A[cite: 6, 7].
+4. **Seletor Físico:** 1x Chave Deslizante de 3 Posições (Slide Switch SP3T ou similar)[cite: 6].
+5. **Alimentação:** Fonte 5V / 2A (mínimo)[cite: 7].
+6. **Conectores:** 
+   * 2x Conectores Jack 6.35mm (P10) Fêmea de Painel para *Line In*[cite: 7].
+   * 1x Conector Jack 3.5mm (P2) ou 6.35mm (P10) para *Line Out*[cite: 7].
+   * Fios de Áudio Blindados (Shielded Cable)[cite: 7].
 
 ---
 
 ## 🔌 Esquema de Ligações (Pinout)
 
-[cite_start]O código foi rigorosamente desenhado para evitar conflito de barramentos entre o display OLED interno e os dois barramentos de áudio I2S utilizados. 
+O código foi otimizado para evitar conflito de barramentos entre o display OLED interno e as linhas do I2S[cite: 6].
 
-> **Aviso:** A placa ESP32 deve alimentar os módulos PCM de áudio exclusivamente no pino `3.3V`, todos devem partilhar a mesma ligação de Terra (`GND`).
+### 1. Interface de Controle
+| Componente | Pino do Componente | Pino do ESP32 | Função |
+| :--- | :--- | :--- | :--- |
+| **Visor OLED** | SDA | **GPIO 21** | Dados I2C[cite: 6] |
+| **Visor OLED** | SCL | **GPIO 22** | Relógio I2C[cite: 6] |
+| **Chave Seletora** | Pino Lateral A | **GPIO 4** | Seleciona Modo Servidor[cite: 6] |
+| **Chave Seletora** | Pino Lateral B | **GPIO 5** | Seleciona Modo Auxiliar[cite: 6] |
+| **Chave Seletora** | Pino Central (Comum)| **GND** | Aterra a seleção desejada[cite: 6] |
 
-### 1. Conexão do Ecrã OLED (Interno à placa recomendada)
-| ESP32 Pin | Função I2C |
-| :--- | :--- |
-| **GPIO 21** | SDA (Data) |
-| **GPIO 22** | SCL (Clock) |
+*(Nota: O Modo Bluetooth é ativado automaticamente quando a chave está no centro e nenhum dos pinos laterais está aterrado[cite: 6]).*
 
-### 2. Conexão da Entrada Analógica (PCM1808 - Line In)
-Captura o áudio vindo da sua mesa de som e injeta digitalmente no ESP32.
+### 2. Barramentos de Áudio I2S
+A placa ESP32 deve alimentar os módulos PCM de áudio apenas com `3.3V` e partilhar a ligação `GND` comum[cite: 7].
 
-| PCM1808 Pin | ESP32 Pin | Função I2S (Barramento 1 - Apenas RX) |
-| :--- | :--- | :--- |
-| **BCK** | **GPIO 14** | Bit Clock |
-| **LRCK** | **GPIO 12** | Word Select (Left/Right Clock) |
-| **DOUT** | **GPIO 13** | Digital Audio Data Input (Entra no ESP32) |
-| **SCK** | **GND** | System Clock (Mantido no terra em modo Master/ESP) |
+**Entrada Analógica (PCM1808 - Apenas RX):**
+* **BCK**  $\rightarrow$ **GPIO 14**[cite: 6]
+* **LRCK** $\rightarrow$ **GPIO 12**[cite: 6]
+* **DOUT** $\rightarrow$ **GPIO 13**[cite: 6]
 
-### 3. Conexão da Saída Analógica (PCM5102A - Line Out)
-Recebe música digital do ESP32 e converte em analógico para enviar à mesa/fone.
-
-| PCM5102A Pin | ESP32 Pin | Função I2S (Barramento 0 - Apenas TX) |
-| :--- | :--- | :--- |
-| **BCK** | **GPIO 26** | Bit Clock |
-| **LCK (LRCK)** | **GPIO 25** | Word Select (Left/Right Clock) |
-| **DIN** | **GPIO 18** | Digital Audio Data Output (Sai do ESP32) |
-| **SCK** | **GND** | System Clock |
+**Saída Analógica (PCM5102A - Apenas TX):**
+* **BCK**  $\rightarrow$ **GPIO 26**[cite: 6]
+* **LCK**  $\rightarrow$ **GPIO 25**[cite: 6]
+* **DIN**  $\rightarrow$ **GPIO 18**[cite: 6]
 
 ---
 
-## ⚙️ Como Usar
+## ⚙️ Como Instalar e Usar
 
-### Instalação Física
-1. Instale o firmware através do **Arduino IDE**.
-2. Certifique-se de instalar as bibliotecas `Adafruit_GFX` e `Adafruit_SSD1306`.
-3. Selecione o modelo padrão ESP32 Dev Module e faça o upload.
+### 1. Preparação do Firmware
+1. Abra o projeto no **Arduino IDE**[cite: 7].
+2. Nas opções de `Ferramentas > Partition Scheme`, selecione **"Huge APP"** ou **"Minimal SPIFFS"**, pois as bibliotecas de Wi-Fi, Servidor e Bluetooth agrupadas requerem espaço extra na Flash[cite: 6].
+3. Instale as bibliotecas necessárias: `Adafruit_GFX`, `Adafruit_SSD1306`[cite: 6] e **`ESP32-A2DP`** (do autor Phil Schatzmann)[cite: 6].
+4. Faça o upload para o ESP32[cite: 7].
 
-### Primeira Configuração
-1. Assim que for ligado, o visor OLED indicará o estado: `MODO CONFIGURACAO`.
-2. Aceda, no seu smartphone, à rede Wi-Fi criada: **`ESP32_Audio_Setup`**.
-3. Abra o navegador e digite o endereço IP: **`192.168.4.1`**.
-4. Irá abrir a nossa interface web. Selecione a rede do local, insira a palavra-passe e defina qual será o Endereço IP do seu Computador (onde corre o OBS / Voicemeeter).
-5. Prima Guardar. O ESP32 reiniciará e ligar-se-á autonomamente à rede da Igreja ou Estúdio.
+### 2. Configuração Wi-Fi (Modo Access Point)
+* Ao ligar pela primeira vez (ou se a rede configurada cair), o dispositivo criará uma rede Wi-Fi temporária chamada **`AudioServer_Setup`**[cite: 6].
+* Conecte-se a ela com o seu smartphone[cite: 7].
+* Navegue para **`192.168.4.1`** no seu browser[cite: 4, 6].
+* Selecione a rede local (SSID) da sua Igreja/Estúdio, digite a senha e guarde[cite: 4, 6]. O ESP32 reiniciará[cite: 4].
 
-### Interação com o Voicemeeter
-- No computador anfitrião, abra o **Voicemeeter** (Potato ou Banana).
-- Ligue a funcionalidade **VBAN**.
-- **Entrada (Som da Mesa para Live):** Em *Incoming Streams*, adicione um stream com o IP indicado no ecrã OLED e nomeie-o `Stream1`.
-- **Saída (Música do PC para a Mesa):** Em *Outgoing Streams*, aponte para o IP do ESP32 na porta 6980.
+### 3. Conexão dos Clientes (Aplicações)
+O ESP32 atua como o servidor primário na rede[cite: 6]. Para que as suas futuras aplicações clientes funcionem:
+* Certifique-se de que a chave está na posição **"Modo Servidor"**[cite: 6].
+* O endereço de ligação será o IP mostrado no visor OLED[cite: 6].
+* A aplicação deve abrir um Socket TCP na porta **`7000`**[cite: 4, 6].
+* O fluxo de áudio consiste num stream contínuo de PCM cru a `44100Hz`, `16-bits`, Estéreo[cite: 6].
 
 ---
-*Desenvolvido em C++ / ESP-IDF nativo portado para Arduino Core.*
+*Arquitetura refatorada para ESP32 em C++.*
