@@ -1,5 +1,7 @@
 # Interface de Áudio Wi-Fi Bidirecional com ESP32 🎧📡
 
+<a href="https://buymeacoffee.com/hapyjatech" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 Este projeto transforma um ESP32 padrão num sistema profissional de transmissão e recepção de áudio sem fios com qualidade de CD (44.1kHz/16-bits), utilizando o protocolo **VBAN** para integração em tempo real com **Voicemeeter** ou **OBS Studio**.
 
 Desenvolvido para captura de mesas de som e retorno, superando as graves limitações de qualidade e latência do Bluetooth clássico. O dispositivo inclui um portal cativo web (Captive Portal) para configuração e um visor OLED integrado para monitoramento das métricas em tempo real (VU Meter).
